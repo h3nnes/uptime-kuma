@@ -1974,6 +1974,36 @@
                                 />
                             </div>
 
+                            <!-- Monitor Dependency -->
+                            <div class="my-3">
+                                <label for="monitorDependencySelector" class="form-label">
+                                    {{ $t("Monitor Dependency") }}
+                                </label>
+                                <ActionSelect
+                                    id="monitorDependencySelector"
+                                    v-model="monitor.dependsOn"
+                                    :options="dependencyMonitorOptionsList"
+                                    :disabled="dependencyMonitorList.length === 0"
+                                />
+                                <div class="form-text">{{ $t("monitorDependencyDescription") }}</div>
+                            </div>
+
+                            <!-- Suppress Child Notifications -->
+                            <div class="my-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        id="suppressChildNotifications"
+                                        v-model="monitor.suppressChildNotifications"
+                                        class="form-check-input"
+                                        type="checkbox"
+                                    />
+                                    <label class="form-check-label" for="suppressChildNotifications">
+                                        {{ $t("Suppress Child Notifications") }}
+                                    </label>
+                                </div>
+                                <div class="form-text">{{ $t("suppressChildNotificationsDescription") }}</div>
+                            </div>
+
                             <!-- Description -->
                             <div class="my-3">
                                 <label for="description" class="form-label">{{ $t("Description") }}</label>
@@ -3207,6 +3237,71 @@ message HealthCheckResponse {
             }
 
             return list;
+        },
+
+        /**
+         * List of monitors that can be set as dependencies.
+         * Any monitor type except the current monitor and its dependents.
+         * @returns {Array} The dependency monitor list.
+         */
+        dependencyMonitorList() {
+            let result = Object.values(this.$root.monitorList);
+
+            // Exclude itself and any monitor that depends on it (to prevent circular deps)
+            result = result.filter(
+                (monitor) => monitor.id !== this.monitor.id && monitor.dependsOn !== this.monitor.id
+            );
+
+            // Sort by active state, weight, then name
+            result.sort((m1, m2) => {
+                if (m1.active !== m2.active) {
+                    if (m1.active === 0) {
+                        return 1;
+                    }
+                    if (m2.active === 0) {
+                        return -1;
+                    }
+                }
+                if (m1.weight !== m2.weight) {
+                    if (m1.weight > m2.weight) {
+                        return -1;
+                    }
+                    if (m1.weight < m2.weight) {
+                        return 1;
+                    }
+                }
+                return m1.name.localeCompare(m2.name);
+            });
+
+            return result;
+        },
+
+        /**
+         * Generates the dependency monitor options list.
+         * @returns {Array} The dependency monitor options list.
+         */
+        dependencyMonitorOptionsList() {
+            if (this.dependencyMonitorList.length === 0) {
+                return [
+                    {
+                        label: this.$t("noDependencyMonitorMsg"),
+                        value: null,
+                    },
+                ];
+            }
+
+            return [
+                {
+                    label: this.$t("None"),
+                    value: null,
+                },
+                ...this.dependencyMonitorList.map((monitor) => {
+                    return {
+                        label: monitor.pathName || monitor.name,
+                        value: monitor.id,
+                    };
+                }),
+            ];
         },
 
         dockerHostOptionsList() {

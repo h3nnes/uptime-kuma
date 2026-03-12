@@ -4,6 +4,14 @@
             <router-link v-if="group !== ''" :to="monitorURL(monitor.parent)">
                 {{ group }}
             </router-link>
+            <div v-if="dependencyMonitor" class="dependency-info mb-2">
+                <span class="badge bg-info">
+                    {{ $t("Depends on") }}:
+                    <router-link :to="monitorURL(dependencyMonitor.id)" class="text-white">
+                        {{ dependencyMonitor.name }}
+                    </router-link>
+                </span>
+            </div>
             <h1>
                 {{ monitor.name }}
                 <div class="monitor-id">
@@ -493,6 +501,17 @@ export default {
         },
 
         /**
+         * Get the dependency monitor for this monitor
+         * @returns {object|null} The dependency monitor
+         */
+        dependencyMonitor() {
+            if (!this.monitor || !this.monitor.dependsOn) {
+                return null;
+            }
+            return this.$root.monitorList[this.monitor.dependsOn] || null;
+        },
+
+        /**
          * Get the count of children monitors for this group
          * @returns {number} Number of children monitors
          */
@@ -857,6 +876,10 @@ export default {
 
 <style lang="scss" scoped>
 @import "../assets/vars.scss";
+
+.dependency-info a {
+    text-decoration: underline;
+}
 
 .form-check {
     margin-top: 16px;

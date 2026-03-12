@@ -132,6 +132,9 @@ class Monitor extends BeanModel {
             pathName,
             parent: this.parent,
             childrenIDs: preloadData.childrenIDs.get(this.id) || [],
+            dependsOn: this.depends_on,
+            suppressChildNotifications: Boolean(this.suppress_child_notifications),
+            dependencyIDs: preloadData.dependencyIDs ? preloadData.dependencyIDs.get(this.id) || [] : [],
             url: this.url,
             wsIgnoreSecWebsocketAcceptHeader: this.getWsIgnoreSecWebsocketAcceptHeader(),
             wsSubprotocol: this.wsSubprotocol,
@@ -1001,8 +1004,17 @@ class Monitor extends BeanModel {
                 bean.important = true;
 
                 if (Monitor.isImportantForNotification(isFirstBeat, previousBeat?.status, bean.status)) {
-                    log.debug("monitor", `[${this.name}] sendNotification`);
-                    await Monitor.sendNotification(isFirstBeat, this, bean);
+                    // Check if notifications should be suppressed due to dependency being down
+                    const dependencyStatus = await Monitor.isDependencyDown(this.id);
+                    if (dependencyStatus.down && bean.status === DOWN) {
+                        log.info(
+                            "monitor",
+                            `[${this.name}] Notification suppressed: dependency "${dependencyStatus.dependencyName}" is down`
+                        );
+                    } else {
+                        log.debug("monitor", `[${this.name}] sendNotification`);
+                        await Monitor.sendNotification(isFirstBeat, this, bean);
+                    }
                 } else {
                     log.debug(
                         "monitor",
@@ -1024,12 +1036,21 @@ class Monitor extends BeanModel {
                 if (bean.status === DOWN && this.resendInterval > 0) {
                     ++bean.downCount;
                     if (bean.downCount >= this.resendInterval) {
-                        // Send notification again, because we are still DOWN
-                        log.debug(
-                            "monitor",
-                            `[${this.name}] sendNotification again: Down Count: ${bean.downCount} | Resend Interval: ${this.resendInterval}`
-                        );
-                        await Monitor.sendNotification(isFirstBeat, this, bean);
+                        // Check if notifications should be suppressed due to dependency being down
+                        const dependencyStatus = await Monitor.isDependencyDown(this.id);
+                        if (dependencyStatus.down) {
+                            log.info(
+                                "monitor",
+                                `[${this.name}] Resend notification suppressed: dependency "${dependencyStatus.dependencyName}" is down`
+                            );
+                        } else {
+                            // Send notification again, because we are still DOWN
+                            log.debug(
+                                "monitor",
+                                `[${this.name}] sendNotification again: Down Count: ${bean.downCount} | Resend Interval: ${this.resendInterval}`
+                            );
+                            await Monitor.sendNotification(isFirstBeat, this, bean);
+                        }
 
                         // Reset down count
                         bean.downCount = 0;
@@ -1652,6 +1673,45 @@ class Monitor extends BeanModel {
     }
 
     /**
+     * Check if a dependency monitor is currently down and suppressing notifications
+     * @param {number} monitorID ID of monitor to check
+     * @param {Set} visited Set of already-visited monitor IDs to prevent infinite recursion
+     * @returns {Promise<{down: boolean, dependencyName?: string}>} Whether notifications should be suppressed
+     */
+    static async isDependencyDown(monitorID, visited = new Set()) {
+        if (visited.has(monitorID)) {
+            return { down: false };
+        }
+        visited.add(monitorID);
+
+        const monitor = await R.findOne("monitor", " id = ? ", [monitorID]);
+        if (!monitor || !monitor.depends_on) {
+            return { down: false };
+        }
+
+        const dependency = await R.findOne("monitor", " id = ? ", [monitor.depends_on]);
+        if (!dependency) {
+            return { down: false };
+        }
+
+        // First check if the dependency itself has a dependency that is down
+        const parentDependencyStatus = await Monitor.isDependencyDown(dependency.id, visited);
+        if (parentDependencyStatus.down) {
+            return parentDependencyStatus;
+        }
+
+        // Now check if this dependency is down
+        if (dependency.suppress_child_notifications) {
+            const lastHeartbeat = await Monitor.getPreviousHeartbeat(dependency.id);
+            if (lastHeartbeat && lastHeartbeat.status === DOWN) {
+                return { down: true, dependencyName: dependency.name };
+            }
+        }
+
+        return { down: false };
+    }
+
+    /**
      * Make sure monitor interval is between bounds
      * @returns {void}
      * @throws Interval is outside of range
@@ -1849,6 +1909,7 @@ class Monitor extends BeanModel {
         const activeStatusMap = new Map();
         const forceInactiveMap = new Map();
         const pathsMap = new Map();
+        const dependencyIDsMap = new Map();
 
         if (monitorData.length > 0) {
             const monitorIDs = monitorData.map((monitor) => monitor.id);
@@ -1865,6 +1926,12 @@ class Monitor extends BeanModel {
                 monitorData.map((monitor) => Monitor.isParentActive(monitor.id))
             );
             const paths = await Promise.all(monitorData.map((monitor) => Monitor.getAllPath(monitor.id, monitor.name)));
+
+            // Get monitors that depend on each monitor (reverse lookup)
+            const dependencyRows = await R.getAll(
+                `SELECT id, depends_on FROM monitor WHERE depends_on IN (${monitorIDs.map(() => "?").join(",")})`,
+                monitorIDs
+            );
 
             notifications.forEach((row) => {
                 if (!notificationsMap.has(row.monitor_id)) {
@@ -1905,6 +1972,12 @@ class Monitor extends BeanModel {
             monitorData.forEach((monitor, index) => {
                 pathsMap.set(monitor.id, paths[index]);
             });
+
+            // Build dependency IDs map (which monitors depend on this monitor)
+            monitorData.forEach((monitor) => {
+                const depIDs = dependencyRows.filter((row) => row.depends_on === monitor.id).map((row) => row.id);
+                dependencyIDsMap.set(monitor.id, depIDs);
+            });
         }
 
         return {
@@ -1915,6 +1988,7 @@ class Monitor extends BeanModel {
             activeStatus: activeStatusMap,
             forceInactive: forceInactiveMap,
             paths: pathsMap,
+            dependencyIDs: dependencyIDsMap,
         };
     }
 
@@ -1933,6 +2007,29 @@ class Monitor extends BeanModel {
         `,
             [monitorID]
         );
+    }
+
+    /**
+     * Gets the dependency monitor for a given monitor
+     * @param {number} monitorID ID of monitor
+     * @returns {Promise<LooseObject<any>>} Dependency monitor or null
+     */
+    static async getDependencyMonitor(monitorID) {
+        return await R.getRow(
+            `SELECT dep.* FROM monitor dep
+             JOIN monitor child ON child.depends_on = dep.id
+             WHERE child.id = ?`,
+            [monitorID]
+        );
+    }
+
+    /**
+     * Gets all monitors that depend on a given monitor
+     * @param {number} monitorID ID of the dependency monitor
+     * @returns {Promise<LooseObject<any>[]>} Dependent monitors
+     */
+    static async getDependents(monitorID) {
+        return await R.getAll(`SELECT * FROM monitor WHERE depends_on = ?`, [monitorID]);
     }
 
     /**

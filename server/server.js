@@ -744,6 +744,10 @@ let needSetup = false;
 
                 monitor.rabbitmqNodes = JSON.stringify(monitor.rabbitmqNodes);
 
+                // Save camelCase properties before cleanup for snake_case mapping
+                const dependsOnValue = monitor.dependsOn;
+                const suppressChildNotificationsValue = monitor.suppressChildNotifications;
+
                 /*
                  * List of frontend-only properties that should not be saved to the database.
                  * Should clean up before saving to the database.
@@ -752,6 +756,9 @@ let needSetup = false;
                     "humanReadableInterval",
                     "globalpingdnsresolvetypeoptions",
                     "responsecheck",
+                    "dependencyIDs",
+                    "dependsOn",
+                    "suppressChildNotifications",
                 ];
                 for (const prop of frontendOnlyProperties) {
                     if (prop in monitor) {
@@ -764,7 +771,21 @@ let needSetup = false;
                 if (monitor.retryOnlyOnStatusCodeFailure !== undefined) {
                     bean.retry_only_on_status_code_failure = monitor.retryOnlyOnStatusCodeFailure;
                 }
+                if (dependsOnValue !== undefined) {
+                    bean.depends_on = dependsOnValue;
+                }
+                if (suppressChildNotificationsValue !== undefined) {
+                    bean.suppress_child_notifications = Boolean(suppressChildNotificationsValue);
+                }
                 bean.user_id = socket.userID;
+
+                // Validate dependency target exists and belongs to the same user
+                if (bean.depends_on) {
+                    const depTarget = await R.findOne("monitor", " id = ? ", [bean.depends_on]);
+                    if (!depTarget || depTarget.user_id !== socket.userID) {
+                        throw new Error("Invalid dependency monitor");
+                    }
+                }
 
                 bean.validate();
 
@@ -816,6 +837,30 @@ let needSetup = false;
                     }
                 }
 
+                // Check if dependency would create a circular reference
+                if (monitor.dependsOn !== null && monitor.dependsOn !== undefined) {
+                    // Cannot depend on itself
+                    if (monitor.dependsOn === monitor.id) {
+                        throw new Error("A monitor cannot depend on itself");
+                    }
+                    // Validate dependency target exists and belongs to the same user
+                    const depTarget = await R.findOne("monitor", " id = ? ", [monitor.dependsOn]);
+                    if (!depTarget || depTarget.user_id !== socket.userID) {
+                        throw new Error("Invalid dependency monitor");
+                    }
+                    // Check for circular dependency chain
+                    let currentDepId = monitor.dependsOn;
+                    const visited = new Set([monitor.id]);
+                    while (currentDepId) {
+                        if (visited.has(currentDepId)) {
+                            throw new Error("Circular dependency detected");
+                        }
+                        visited.add(currentDepId);
+                        const depMonitor = await R.findOne("monitor", " id = ? ", [currentDepId]);
+                        currentDepId = depMonitor ? depMonitor.depends_on : null;
+                    }
+                }
+
                 // Remove children if monitor type has changed (from group to non-group)
                 if (bean.type === "group" && monitor.type !== bean.type) {
                     removeGroupChildren = true;
@@ -829,6 +874,8 @@ let needSetup = false;
                 bean.name = monitor.name;
                 bean.description = monitor.description;
                 bean.parent = monitor.parent;
+                bean.depends_on = monitor.dependsOn;
+                bean.suppress_child_notifications = Boolean(monitor.suppressChildNotifications);
                 bean.type = monitor.type;
                 bean.subtype = monitor.subtype;
                 bean.url = monitor.url;

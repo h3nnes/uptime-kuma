@@ -36,7 +36,20 @@
                                 />
                             </span>
                             <div class="flex-fill text-truncate" style="min-width: 0">
-                                <div class="text-truncate">{{ monitor.name }}</div>
+                                <div class="text-truncate">
+                                    {{ monitor.name }}
+                                    <span
+                                        v-if="monitor.dependsOn"
+                                        class="dependency-indicator"
+                                        :title="$t('Has dependency')"
+                                    >
+                                        <font-awesome-icon
+                                            icon="link"
+                                            class="text-info ms-1"
+                                            style="font-size: 0.7em"
+                                        />
+                                    </span>
+                                </div>
                                 <div v-if="monitor.tags.length > 0" class="tags gap-1">
                                     <Tag v-for="tag in monitor.tags" :key="tag" :item="tag" :size="'sm'" />
                                 </div>

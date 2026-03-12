@@ -603,6 +603,20 @@ ALTER TABLE monitor
         table.boolean("gamedig_given_port_only").defaultTo(1).notNullable();
     });
 
+    // 2026-03-12-0000-add-monitor-dependency.js
+    await knex.schema.table("monitor", function (table) {
+        table
+            .integer("depends_on")
+            .nullable()
+            .defaultTo(null)
+            .unsigned()
+            .references("id")
+            .inTable("monitor")
+            .onDelete("SET NULL")
+            .onUpdate("CASCADE");
+        table.boolean("suppress_child_notifications").notNullable().defaultTo(false);
+    });
+
     log.info("mariadb", "Created basic tables for MariaDB");
 }
 
