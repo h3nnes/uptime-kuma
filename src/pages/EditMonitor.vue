@@ -1412,6 +1412,22 @@
                                 </div>
                             </div>
 
+                            <div class="my-3">
+                                <label for="maxRetriesUp" class="form-label">{{ $t("Up Confirmation") }}</label>
+                                <input
+                                    id="maxRetriesUp"
+                                    v-model="monitor.maxRetriesUp"
+                                    type="number"
+                                    class="form-control"
+                                    required
+                                    min="0"
+                                    step="1"
+                                />
+                                <div class="form-text">
+                                    {{ $t("upConfirmationDescription") }}
+                                </div>
+                            </div>
+
                             <!-- Retry only on status code failure: JSON Query only -->
                             <div v-if="monitor.type === 'json-query' && monitor.maxretries > 0" class="my-3">
                                 <div class="form-check">
@@ -2894,6 +2910,7 @@ const monitorDefaults = {
     retryInterval: 60,
     resendInterval: 0,
     maxretries: 0,
+    maxRetriesUp: 0,
     retryOnlyOnStatusCodeFailure: false,
     notificationIDList: {},
     ignoreTls: false,

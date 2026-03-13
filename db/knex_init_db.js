@@ -617,6 +617,11 @@ ALTER TABLE monitor
         table.boolean("suppress_child_notifications").notNullable().defaultTo(false);
     });
 
+    // 2026-03-13-0000-add-max-retries-up.js
+    await knex.schema.table("monitor", function (table) {
+        table.integer("max_retries_up").notNullable().defaultTo(0);
+    });
+
     log.info("mariadb", "Created basic tables for MariaDB");
 }
 

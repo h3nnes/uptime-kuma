@@ -144,6 +144,7 @@ class Monitor extends BeanModel {
             location: this.location,
             protocol: this.protocol,
             maxretries: this.maxretries,
+            maxRetriesUp: this.max_retries_up,
             weight: this.weight,
             active: preloadData.activeStatus.get(this.id),
             forceInactive: preloadData.forceInactive.get(this.id),
@@ -412,6 +413,7 @@ class Monitor extends BeanModel {
     async start(io) {
         let previousBeat = null;
         let retries = 0;
+        let upRetries = 0;
 
         this.rootCertificates = rootCertificates;
 
@@ -447,6 +449,7 @@ class Monitor extends BeanModel {
             }
 
             const isFirstBeat = !previousBeat;
+            let upConfirmationCompleted = false;
 
             let bean = R.dispense("heartbeat");
             bean.monitor_id = this.id;
@@ -949,6 +952,36 @@ class Monitor extends BeanModel {
                 }
 
                 retries = 0;
+
+                // UP confirmation logic: require N consecutive successes before marking UP
+                // Only applies when recovering from confirmed DOWN, or continuing UP confirmation
+                // (upRetries > 0 distinguishes UP-confirmation PENDING from down-retry PENDING)
+                if (
+                    this.max_retries_up > 0 &&
+                    previousBeat &&
+                    (previousBeat.status === DOWN || (previousBeat.status === PENDING && upRetries > 0))
+                ) {
+                    upRetries++;
+                    if (upRetries < this.max_retries_up) {
+                        bean.status = PENDING;
+                        log.debug(
+                            "monitor",
+                            `[${this.name}] UP confirmation pending: ${upRetries}/${this.max_retries_up}`
+                        );
+                    } else {
+                        // Confirmed UP after N consecutive successes
+                        // Mark that we completed UP confirmation so isImportantBeat sees DOWN->UP
+                        upConfirmationCompleted = true;
+                        upRetries = 0;
+                        log.debug(
+                            "monitor",
+                            `[${this.name}] UP confirmed after ${this.max_retries_up} consecutive successes`
+                        );
+                    }
+                } else if (bean.status === UP) {
+                    // Reset up retries counter when confirmed UP or no up-retry configured
+                    upRetries = 0;
+                }
             } catch (error) {
                 if (error?.name === "CanceledError") {
                     bean.msg = `timeout by AbortSignal (${this.timeout}s)`;
@@ -959,6 +992,9 @@ class Monitor extends BeanModel {
                 if (this.getSaveErrorResponse() && error?.response?.data !== undefined) {
                     await this.saveResponseData(bean, error.response.data);
                 }
+
+                // Reset UP confirmation counter on failure
+                upRetries = 0;
 
                 // If UP come in here, it must be upside down mode
                 // Just reset the retries
@@ -995,15 +1031,19 @@ class Monitor extends BeanModel {
 
             bean.retries = retries;
 
+            // When UP confirmation completes, treat this as DOWN->UP for importance checks
+            // so that recovery notifications are properly triggered
+            const effectivePreviousStatus = upConfirmationCompleted ? DOWN : previousBeat?.status;
+
             log.debug("monitor", `[${this.name}] Check isImportant`);
-            let isImportant = Monitor.isImportantBeat(isFirstBeat, previousBeat?.status, bean.status);
+            let isImportant = Monitor.isImportantBeat(isFirstBeat, effectivePreviousStatus, bean.status);
 
             // Mark as important if status changed, ignore pending pings,
             // Don't notify if disrupted changes to up
             if (isImportant) {
                 bean.important = true;
 
-                if (Monitor.isImportantForNotification(isFirstBeat, previousBeat?.status, bean.status)) {
+                if (Monitor.isImportantForNotification(isFirstBeat, effectivePreviousStatus, bean.status)) {
                     // Check if notifications should be suppressed due to dependency being down
                     const dependencyStatus = await Monitor.isDependencyDown(this.id);
                     if (dependencyStatus.down) {

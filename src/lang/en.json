@@ -96,6 +96,8 @@
     "resendEveryXTimes": "Resend every {0} times",
     "resendDisabled": "Resend disabled",
     "retriesDescription": "Maximum retries before the service is marked as down and a notification is sent",
+    "Up Confirmation": "Up Confirmation",
+    "upConfirmationDescription": "Number of consecutive successful checks required before the service is marked as UP again. Set to 0 to transition to UP immediately. Useful to prevent flapping or to ensure a dependency monitor stays down long enough for dependent monitors to recover first.",
     "Only retry if status code check fails": "Only retry if status code check fails",
     "retryOnlyOnStatusCodeFailureDescription": "If enabled, retries will only occur when the HTTP status code check fails (e.g., server is down). If the status code check passes but the JSON query fails, the monitor will be marked as down immediately without retries.",
     "ignoredTLSError": "TLS/SSL errors have been ignored",

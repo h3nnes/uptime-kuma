@@ -747,6 +747,7 @@ let needSetup = false;
                 // Save camelCase properties before cleanup for snake_case mapping
                 const dependsOnValue = monitor.dependsOn;
                 const suppressChildNotificationsValue = monitor.suppressChildNotifications;
+                const maxRetriesUpValue = monitor.maxRetriesUp;
 
                 /*
                  * List of frontend-only properties that should not be saved to the database.
@@ -759,6 +760,7 @@ let needSetup = false;
                     "dependencyIDs",
                     "dependsOn",
                     "suppressChildNotifications",
+                    "maxRetriesUp",
                 ];
                 for (const prop of frontendOnlyProperties) {
                     if (prop in monitor) {
@@ -776,6 +778,9 @@ let needSetup = false;
                 }
                 if (suppressChildNotificationsValue !== undefined) {
                     bean.suppress_child_notifications = Boolean(suppressChildNotificationsValue);
+                }
+                if (maxRetriesUpValue !== undefined) {
+                    bean.max_retries_up = maxRetriesUpValue;
                 }
                 bean.user_id = socket.userID;
 
@@ -903,6 +908,7 @@ let needSetup = false;
                 bean.hostname = monitor.hostname;
                 bean.game = monitor.game;
                 bean.maxretries = monitor.maxretries;
+                bean.max_retries_up = monitor.maxRetriesUp;
                 bean.port = parseInt(monitor.port);
                 bean.location = monitor.location;
                 bean.protocol = monitor.protocol;
