@@ -1049,7 +1049,7 @@ class Monitor extends BeanModel {
                     if (dependencyStatus.down) {
                         log.info(
                             "monitor",
-                            `[${this.name}] Notification suppressed (status=${bean.status === DOWN ? "DOWN" : "UP"}): dependency "${dependencyStatus.dependencyName}" is down`
+                            `[${this.name}] Notification suppressed (status=${bean.status === DOWN ? "DOWN" : "UP"}): dependency "${dependencyStatus.dependencyName}" is down or recovering`
                         );
                     } else {
                         log.debug("monitor", `[${this.name}] sendNotification`);
@@ -1081,7 +1081,7 @@ class Monitor extends BeanModel {
                         if (dependencyStatus.down) {
                             log.info(
                                 "monitor",
-                                `[${this.name}] Resend notification suppressed: dependency "${dependencyStatus.dependencyName}" is down`
+                                `[${this.name}] Resend notification suppressed: dependency "${dependencyStatus.dependencyName}" is down or recovering`
                             );
                         } else {
                             // Send notification again, because we are still DOWN
@@ -1713,7 +1713,10 @@ class Monitor extends BeanModel {
     }
 
     /**
-     * Check if a dependency monitor is currently down and suppressing notifications
+     * Check if a dependency monitor is currently down (or recovering via UP confirmation)
+     * and suppressing notifications.
+     * A dependency is considered "down" if its last heartbeat is DOWN, or if it is in
+     * PENDING state transitioning from DOWN to UP (i.e., UP confirmation in progress).
      * @param {number} monitorID ID of monitor to check
      * @param {Set} visited Set of already-visited monitor IDs to prevent infinite recursion
      * @returns {Promise<{down: boolean, dependencyName?: string}>} Whether notifications should be suppressed
@@ -1740,11 +1743,26 @@ class Monitor extends BeanModel {
             return parentDependencyStatus;
         }
 
-        // Now check if this dependency is down
+        // Now check if this dependency is down (or still recovering)
         if (dependency.suppress_child_notifications) {
             const lastHeartbeat = await Monitor.getPreviousHeartbeat(dependency.id);
             if (lastHeartbeat && lastHeartbeat.status === DOWN) {
                 return { down: true, dependencyName: dependency.name };
+            }
+
+            // If dependency is in PENDING state, determine the direction:
+            // - Down-to-up PENDING (recovery/UP confirmation): still treat as down for suppression
+            // - Up-to-down PENDING (down retries): NOT down yet, don't suppress
+            // We distinguish by finding the most recent non-PENDING heartbeat.
+            if (lastHeartbeat && lastHeartbeat.status === PENDING) {
+                const lastNonPending = await R.findOne(
+                    "heartbeat",
+                    " monitor_id = ? AND status != ? ORDER BY id DESC",
+                    [dependency.id, PENDING]
+                );
+                if (lastNonPending && lastNonPending.status === DOWN) {
+                    return { down: true, dependencyName: dependency.name };
+                }
             }
         }
 
