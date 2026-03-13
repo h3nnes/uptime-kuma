@@ -1006,10 +1006,10 @@ class Monitor extends BeanModel {
                 if (Monitor.isImportantForNotification(isFirstBeat, previousBeat?.status, bean.status)) {
                     // Check if notifications should be suppressed due to dependency being down
                     const dependencyStatus = await Monitor.isDependencyDown(this.id);
-                    if (dependencyStatus.down && bean.status === DOWN) {
+                    if (dependencyStatus.down) {
                         log.info(
                             "monitor",
-                            `[${this.name}] Notification suppressed: dependency "${dependencyStatus.dependencyName}" is down`
+                            `[${this.name}] Notification suppressed (status=${bean.status === DOWN ? "DOWN" : "UP"}): dependency "${dependencyStatus.dependencyName}" is down`
                         );
                     } else {
                         log.debug("monitor", `[${this.name}] sendNotification`);
